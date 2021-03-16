@@ -1,0 +1,238 @@
+---
+title: "244 Lab 8"
+author: "Molly Williams"
+date: "2/27/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### 0. Load packages
+```{r}
+
+library(tidyverse) # You have this
+library(janitor) # You probably have this
+library(plotly) # You probably have this
+library(RColorBrewer) # You probably have this
+library(NbClust) # Get this
+library(cluster) # Get this
+library(factoextra) # You probably have this
+library(dendextend) # You might have this
+library(ggdendro) # Get this
+library(pdftools) # Get this
+library(tidytext) # Get this
+library(wordcloud) # Get this
+```
+
+### Part 1: k-means clustering
+
+```{r}
+
+iris_nice <- iris %>% 
+  clean_names()
+
+ggplot(iris_nice) +
+  geom_point(aes(x = petal_length, y = petal_width, color = species))
+
+
+```
+
+How many clusters do YOU think should exist, R? 
+
+```{r}
+
+number_est <- NbClust(iris_nice[1:4], min.nc = 2, max.nc = 10, method = "kmeans")
+# numbers automatically calculated ; check r console tab in output for suggestions from R
+
+# We'll stick with three clusters when we perform k-means clustering
+
+```
+
+Perform k-means clustering with three groups:
+
+```{r}
+
+iris_km <- kmeans(iris_nice[1:4], 3)
+
+iris_km$size
+iris_km$centers
+
+# What cluster has each observation been assigned to?
+iris_km$cluster
+
+# Output shows that clusters are pretty well separated ; some overlap between clusters 1 & 2
+
+
+# bind cluster assignment to original data (add another column):
+iris_cl <- data.frame(iris_nice, cluster_no = factor(iris_km$cluster))
+
+
+
+# Visualize:
+ggplot(iris_cl) +
+  geom_point(aes(x = sepal_length, y = sepal_width, color = cluster_no))
+
+# Better:
+
+ggplot(iris_cl) +
+  geom_point(aes(x = petal_length, 
+                 y = petal_width, 
+                 color = cluster_no, 
+                 pch = species)) +
+  scale_color_brewer(palette = "Set2")
+
+
+# With only two variables (petal width/length), it's hard to see what's going on. Expand to three (3D plots are hard to understand) using plotly:
+
+
+plot_ly(x = iris_cl$petal_length, 
+        y = iris_cl$petal_width, 
+        z = iris_cl$sepal_width, 
+        type = "scatter3d", 
+        color = iris_cl$cluster_no, 
+        symbol = ~iris_cl$species,
+        marker = list(size = 3),
+        colors = "Set1")
+
+
+```
+
+
+
+### Part 2: Hierarchical cluster analysis
+
+Hierarchical cluster analysis (dendrograms) in R
+
+Relevant functions:
+
+stats::hclust() - agglomerative hierarchical clustering
+cluster::diana() - divisive hierarchical clustering
+
+We'll be using WorldBank environmental data (simplified), wb_env.csv
+
+```{r}
+
+wb_env <- read_csv("wb_env.csv")
+
+# Only keep top 20 greenhouse gas emitters (for simplifying visualization here...)
+wb_ghg_20 <- wb_env %>% 
+  arrange(-ghg) %>% 
+  head(20)
+
+# Scale it (can consider this for k-means clustering, too...)
+wb_scaled <- as.data.frame(scale(wb_ghg_20[3:7]))
+
+
+# Update to add rownames (country name)
+rownames(wb_scaled) <- wb_ghg_20$name
+# Country names are now row names (tidy), 5 continuous variables are retained 
+
+# Compute dissimilarity values (Euclidean distances):
+diss <- dist(wb_scaled, method = "euclidean")
+
+
+# Hierarchical clustering (complete linkage)
+hc_complete <- hclust(diss, method = "complete" )
+
+# Plot it (base plot):
+plot(hc_complete, cex = 0.6, hang = -1)
+
+
+# Divisive clustering:
+hc_div <- diana(diss)
+
+plot(hc_div, hang = -1)
+
+dend1 <- as.dendrogram(hc_complete)
+dend2 <- as.dendrogram(hc_div) #divisive version
+
+# Make tanglegram of them both:
+tanglegram(dend1, dend2)
+# Lots of tangle for this comparison; can be quantified! 
+
+
+```
+
+
+
+####Part 3. Intro to text analysis: pdftools, stringr intro, tidytext
+
+Note: for a more complete text analysis introduction, I recommend forking and working through Casey O'Hara and Jessica Couture's eco-data-sci workshop (available here  <https://github.com/oharac/text_workshop>)
+
+We'll use pdftools to extra text from PDFs, then do some analysis
+```{r}
+
+greta_thunberg <- file.path("greta_thunberg.pdf")
+thunberg_text <- pdf_text(greta_thunberg)
+
+# Just call thunberg_text in the console to see the full text
+
+
+thunberg_df <- data.frame(text = thunberg_text) %>% 
+  mutate(text_full = str_split(text, '\\n')) %>% 
+  unnest(text_full)
+
+speech_text <- thunberg_df %>% # Get the full speech
+  select(text_full) %>% # Only keep the text
+  slice(4:18) # Filter by row number
+
+# Put text in an easy-to-use format: use tidytext::unnest_tokens to separate all the words
+sep_words <- speech_text %>% 
+  unnest_tokens(word, text_full)
+
+# Count how many times each word shows up
+word_counts <- sep_words %>% 
+  count(word, sort = TRUE)
+
+
+
+```
+
+...but a lot of those words aren't really things we're interested in counting...
+...luckily, there's a thing for that.
+
+"Stop words" are common words that aren't generally relevant for searching or analyzing things. We can have R remove those.
+
+
+
+```{r}
+
+words_stop <- sep_words %>% 
+  anti_join(stop_words) # Remove the stop words
+
+# And we can count them
+word_count <- words_stop %>% 
+  count(word, sort = TRUE) # Count words and arrange
+
+```
+
+
+Sentiment analysis
+```{r}
+
+
+get_sentiments("afinn")
+
+# Examples of really awesome words:
+pos_words <- get_sentiments("afinn") %>% 
+  filter(score == 5 | score == 4) %>% 
+  head(20)
+
+# You can look up negative words on your own, (but yes, it includes the worst words you can think of)
+
+neutral_words <- get_sentiments("afinn") %>% 
+  filter(between(score,-1,1)) %>% 
+  head(20)
+
+# Explore the other sentiment lexicons:
+get_sentiments("nrc") # Assigns words to sentiment "groups"
+get_sentiments("bing") # Binary; either "positive" or "negative"
+
+```
+
+
+**rest is in the key. stopped paying attention**
+
+
